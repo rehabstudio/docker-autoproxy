@@ -3,8 +3,8 @@ package main
 import (
 	"bytes"
 	"errors"
+	"flag"
 	"io/ioutil"
-	"log"
 	"os"
 	"os/exec"
 	"path"
@@ -12,6 +12,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/Sirupsen/logrus"
 	"github.com/fsouza/go-dockerclient"
 )
 
@@ -36,125 +37,12 @@ type containerConfig struct {
 // configuration or htpasswd files to disk
 type cfWriter func(string, *containerConfig) (bool, error)
 
-// getExistingcontainers grabs a list of currently active (running or
-// otherwise) containers from the docker API, parses them into simple structs
-// we can use for generating templates and returns them.
-func getExistingContainers(client *docker.Client) ([]*containerConfig, error) {
-
-	apiContainers, err := client.ListContainers(docker.ListContainersOptions{
-		All:  false,
-		Size: false,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	containers := []*containerConfig{}
-	for _, apiContainer := range apiContainers {
-
-		container, err := client.InspectContainer(apiContainer.ID)
-		if err != nil {
-			log.Printf("error inspecting container: %s: %s\n", apiContainer.ID, err)
-			continue
-		}
-
-		// convert the slice of env vars into something more manageable
-		env := docker.Env(container.Config.Env)
-
-		// if the container doesn't have a `VIRTUAL_HOST` environment variable
-		// then we just skip it since we won't be able to configure it properly.
-		vHost, hasVHost := env.Map()["VIRTUAL_HOST"]
-		if !hasVHost {
-			log.Printf("container does not have a `VIRTUAL_HOST` env variable, skipping: %s\n", strings.TrimLeft(apiContainer.Names[0], "/"))
-			continue
-		}
-
-		// use the `VIRTUAL_PORT` env var if set. If this variable is not set
-		// and the container only exposes a single port then we just fall back
-		// to that. If a container exposes multiple ports but doesn't set the
-		// `VIRTUAL_PORT` variable we are unable to configure the container
-		// and will skip it.
-		vPort, hasVPort := env.Map()["VIRTUAL_PORT"]
-		if !hasVPort {
-			if len(container.NetworkSettings.Ports) > 1 {
-				log.Printf("container does not have a `VIRTUAL_PORT` env variable and exposes more than one port, skipping: %s\n", strings.TrimLeft(apiContainer.Names[0], "/"))
-				continue
-			} else if len(container.NetworkSettings.Ports) == 0 {
-				log.Printf("container does not expose any ports, skipping: %s\n", strings.TrimLeft(apiContainer.Names[0], "/"))
-				continue
-			}
-			// even though this for loop might look odd, i'm not sure of a
-			// better way to extract the key, and we can always be sure
-			// there's only one port to iterate over thanks to the clauses
-			// above.
-			for k, _ := range container.NetworkSettings.Ports {
-				vPort = k.Port()
-			}
-		}
-
-		// if the container doesn't have a `SSL_CERT_NAME` environment variable
-		// then we can still configure it, but won't be able to use secure its
-		// traffic using HTTPS.
-		sslCertName := env.Get("SSL_CERT_NAME")
-
-		// extract any htpasswd entries from the environment (if configured)
-		htpasswdEntries := &[]string{}
-		err = env.GetJSON("HTPASSWD", htpasswdEntries)
-		if err != nil {
-			log.Printf("%s\n", env.Get("HTPASSWD"))
-			log.Printf("Unable to parse htpasswd entries from container, is `HTPASSWD` a JSON array?: %s\n", strings.TrimLeft(apiContainer.Names[0], "/"))
-		}
-
-		cc := &containerConfig{
-			Name:            strings.TrimLeft(apiContainer.Names[0], "/"),
-			VHost:           vHost,
-			ContainerIP:     container.NetworkSettings.IPAddress,
-			ContainerPort:   vPort,
-			SSLCertName:     sslCertName,
-			HtpasswdEntries: *htpasswdEntries,
-		}
-
-		containers = append(containers, cc)
-	}
-	return containers, nil
-
-}
-
-func main() {
-
-	// connect to docker api and initialise a new client
-	client, err := docker.NewClient(endpoint)
-	if err != nil {
-		log.Fatalf("Unable to connect to docker API: %s", endpoint)
-	}
-
-	for {
-		// grab a current list of all active containers from the docker api
-		containers, err := getExistingContainers(client)
-		if err != nil {
-			log.Fatalln("Unable to fetch container details")
-		}
-
-		// reconfigure nginx as appropriate
-		err = configureAndReload(containers)
-		if err != nil {
-			log.Fatalf("Unable to configure and reload nginx: %s\n", err)
-		}
-
-		// sleep for a few seconds before starting the polling loop all over
-		// again
-		time.Sleep(5 * time.Second)
-	}
-
-}
-
-// ConfigureAndReload writes configuration and htpasswd files for all running
+// configureAndReload writes configuration and htpasswd files for all running
 // containers before reloading nginx's configuration. This is a destructive
 // operation as some files may be overwritten and others removed, it is
 // important that oneill is configured correctly and has very sensible
 // defaults to account for any silliness here.
 func configureAndReload(ccs []*containerConfig) error {
-	log.Printf("Configuring nginx\n")
 
 	// keep track of whether or not we need to reload the nginx config
 	var reloadRequired bool
@@ -204,10 +92,151 @@ func configureAndReload(ccs []*containerConfig) error {
 	if reloadRequired {
 		return reloadNginxConfiguration()
 	} else {
-		log.Println("Skipped reloading nginx configuration")
+		logrus.Debug("Skipped reloading nginx configuration")
 	}
 
 	return nil
+}
+
+// exitOnError checks that an error is not nil. If the passed value is an
+// error, it is logged and the program exits with an error code of 1
+func exitOnError(err error, prefix string) {
+	if err != nil {
+		logrus.WithFields(logrus.Fields{"err": err}).Fatal(prefix)
+	}
+}
+
+// getExistingcontainers grabs a list of currently active (running or
+// otherwise) containers from the docker API, parses them into simple structs
+// we can use for generating templates and returns them.
+func getExistingContainers(client *docker.Client) ([]*containerConfig, error) {
+
+	apiContainers, err := client.ListContainers(docker.ListContainersOptions{
+		All:  false,
+		Size: false,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	containers := []*containerConfig{}
+	for _, apiContainer := range apiContainers {
+
+		container, err := client.InspectContainer(apiContainer.ID)
+		if err != nil {
+			logrus.WithFields(logrus.Fields{"err": err}).Warn("Unable to inspect container")
+			continue
+		}
+
+		// convert the slice of env vars into something more manageable
+		env := docker.Env(container.Config.Env)
+
+		// if the container doesn't have a `VIRTUAL_HOST` environment variable
+		// then we just skip it since we won't be able to configure it properly.
+		vHost, hasVHost := env.Map()["VIRTUAL_HOST"]
+		if !hasVHost {
+			logrus.WithFields(logrus.Fields{
+				"container": strings.TrimLeft(apiContainer.Names[0], "/"),
+			}).Debug("container does not have a `VIRTUAL_HOST` env variable, skipping")
+			continue
+		}
+
+		// use the `VIRTUAL_PORT` env var if set. If this variable is not set
+		// and the container only exposes a single port then we just fall back
+		// to that. If a container exposes multiple ports but doesn't set the
+		// `VIRTUAL_PORT` variable we are unable to configure the container
+		// and will skip it.
+		vPort, hasVPort := env.Map()["VIRTUAL_PORT"]
+		if !hasVPort {
+			if len(container.NetworkSettings.Ports) > 1 {
+				logrus.WithFields(logrus.Fields{
+					"container": strings.TrimLeft(apiContainer.Names[0], "/"),
+				}).Debug("container does not have a `VIRTUAL_PORT` env variable and exposes more than one port, skipping")
+				continue
+			} else if len(container.NetworkSettings.Ports) == 0 {
+				logrus.WithFields(logrus.Fields{
+					"container": strings.TrimLeft(apiContainer.Names[0], "/"),
+				}).Debug("container does not expose any ports, skipping")
+				continue
+			}
+			// even though this for loop might look odd, i'm not sure of a
+			// better way to extract the key, and we can always be sure
+			// there's only one port to iterate over thanks to the clauses
+			// above.
+			for k, _ := range container.NetworkSettings.Ports {
+				vPort = k.Port()
+			}
+		}
+
+		// if the container doesn't have a `SSL_CERT_NAME` environment variable
+		// then we can still configure it, but won't be able to use secure its
+		// traffic using HTTPS.
+		sslCertName := env.Get("SSL_CERT_NAME")
+
+		// extract any htpasswd entries from the environment (if configured)
+		htpasswdEntries := &[]string{}
+		err = env.GetJSON("HTPASSWD", htpasswdEntries)
+		if err != nil {
+			logrus.WithFields(logrus.Fields{
+				"HTPASSWD":  env.Get("HTPASSWD"),
+				"container": strings.TrimLeft(apiContainer.Names[0], "/"),
+			}).Debug("Unable to parse htpasswd entries from container, is `HTPASSWD` a JSON array?")
+		}
+
+		cc := &containerConfig{
+			Name:            strings.TrimLeft(apiContainer.Names[0], "/"),
+			VHost:           vHost,
+			ContainerIP:     container.NetworkSettings.IPAddress,
+			ContainerPort:   vPort,
+			SSLCertName:     sslCertName,
+			HtpasswdEntries: *htpasswdEntries,
+		}
+
+		containers = append(containers, cc)
+	}
+	return containers, nil
+
+}
+
+// main runs docker-autoproxy's main loop, polling the docker api for
+// container details every 5 seconds.
+func main() {
+
+	cliLogLevel := parseCliArgs()
+	logLevel, err := logrus.ParseLevel(cliLogLevel)
+	exitOnError(err, "Unable to initialise logger")
+
+	// configure global logger instance
+	logrus.SetLevel(logLevel)
+
+	// connect to docker api and initialise a new client
+	client, err := docker.NewClient(endpoint)
+	exitOnError(err, "Unable to connect to docker API")
+
+	for {
+		// grab a current list of all active containers from the docker api
+		containers, err := getExistingContainers(client)
+		exitOnError(err, "Unable to fetch container details")
+
+		// reconfigure nginx as appropriate
+		err = configureAndReload(containers)
+		exitOnError(err, "Unable to configure and reload nginx")
+
+		// sleep for a few seconds before starting the polling loop all over
+		// again
+		time.Sleep(5 * time.Second)
+	}
+
+}
+
+// parseCliArgs parses any arguments passed to docker-autoproxy on the command line
+func parseCliArgs() string {
+
+	// parse log level from command line (default: info)
+	logLevel := flag.String("loglevel", "info", "docker-autoproxy logging level (use \"debug\" for verbose output)")
+	flag.Parse()
+
+	return *logLevel
 }
 
 // reloadNginxConfiguration issues a `service nginx reload` which causes nginx
@@ -230,7 +259,7 @@ func reloadNginxConfiguration() error {
 		return errors.New("Failed to reload nginx")
 	}
 
-	log.Println("Reloaded nginx configuration")
+	logrus.Info("Reloaded nginx configuration")
 	return nil
 }
 
@@ -247,7 +276,7 @@ func removeIfRedundant(directory string, f os.FileInfo, rcs []*containerConfig) 
 	}
 
 	filePath := path.Join(directory, f.Name())
-	log.Printf("Removing file: %s\n", filePath)
+	logrus.WithFields(logrus.Fields{"filePath": filePath}).Info("Removing file")
 	return true, os.Remove(filePath)
 }
 
@@ -302,7 +331,7 @@ func writeIfChanged(path string, content []byte) (bool, error) {
 	}
 
 	if !fileExists || contentChanged {
-		log.Printf("Writing file: %s\n", path)
+		logrus.WithFields(logrus.Fields{"filePath": path}).Info("Writing file")
 		return true, ioutil.WriteFile(path, content, 0644)
 	}
 
@@ -324,7 +353,10 @@ func writeNewConfigFile(d string, cc *containerConfig) (bool, error) {
 	// build template context and render the template to `b`
 	var b bytes.Buffer
 	if nginxTemplate.Execute(&b, cc) != nil {
-		return false, err
+		logrus.WithFields(logrus.Fields{
+			"container": cc.Name,
+		}).Warn("Unspecified error whilst rendering configuration template")
+		return false, nil
 	}
 
 	// write rendered template to disk
