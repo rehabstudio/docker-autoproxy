@@ -1,0 +1,33 @@
+FROM nginx:latest
+MAINTAINER Patrick Carey <patrick@rehabstudio.com>
+
+# Install wget and install/updates certificates
+RUN apt-get update \
+    && apt-get install -y -q --no-install-recommends \
+    ca-certificates \
+    wget \
+    && apt-get clean \
+    && rm -r /var/lib/apt/lists/*
+
+# Configure Nginx and apply fix for very long server names
+RUN echo "daemon off;" >> /etc/nginx/nginx.conf \
+    && sed -i 's/^http {/&\n server_names_hash_bucket_size 128;/g' /etc/nginx/nginx.conf
+
+# Install Forego
+RUN wget -P /usr/local/bin https://godist.herokuapp.com/projects/ddollar/forego/releases/current/linux-amd64/forego \
+    && chmod u+x /usr/local/bin/forego
+
+# copy procfile and nginx template into new container
+COPY Procfile /app/Procfile
+COPY autoproxy.tmpl /app/autoproxy.tmpl
+
+# set default workdor for the container so that forego runs inside this
+# directory
+WORKDIR /app/
+
+# Install docker-autoproxy
+COPY docker-autoproxy /usr/local/bin/docker-autoproxy
+RUN chmod u+x /usr/local/bin/docker-autoproxy
+
+# Run nginx and docker-autoproxy using forego
+CMD ["forego", "start", "-r"]
