@@ -17,9 +17,10 @@ RUN echo "daemon off;" >> /etc/nginx/nginx.conf \
 RUN wget -P /usr/local/bin https://godist.herokuapp.com/projects/ddollar/forego/releases/current/linux-amd64/forego \
     && chmod u+x /usr/local/bin/forego
 
-# copy procfile and nginx template into new container
+# copy procfile and nginx conf/template into new container
 COPY Procfile /app/Procfile
 COPY autoproxy.tmpl /app/autoproxy.tmpl
+COPY nginx.conf /etc/nginx/nginx.conf
 
 # set default workdor for the container so that forego runs inside this
 # directory
