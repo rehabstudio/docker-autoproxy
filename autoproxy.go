@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"os/exec"
@@ -172,6 +173,25 @@ func getExistingContainers(client *docker.Client) ([]*containerConfig, error) {
 		// then we can still configure it, but won't be able to use secure its
 		// traffic using HTTPS.
 		sslCertName := env.Get("SSL_CERT_NAME")
+
+		// ensure that the cert and key actually exist as if either of these
+		// are missing nginx will refuse to start
+		certPath := fmt.Sprintf("/etc/nginx/ssl.d/%s.crt", sslCertName)
+		if _, err := os.Stat(certPath); len(sslCertName) > 0 && os.IsNotExist(err) {
+			logrus.WithFields(logrus.Fields{
+				"SSL_CERT_NAME": sslCertName,
+				"container":     strings.TrimLeft(apiContainer.Names[0], "/"),
+			}).Warning("Unable to find SSL certificate file, disabling HTTPS")
+			sslCertName = ""
+		}
+		keyPath := fmt.Sprintf("/etc/nginx/ssl.d/%s.key", sslCertName)
+		if _, err := os.Stat(keyPath); len(sslCertName) > 0 && os.IsNotExist(err) {
+			logrus.WithFields(logrus.Fields{
+				"SSL_CERT_NAME": sslCertName,
+				"container":     strings.TrimLeft(apiContainer.Names[0], "/"),
+			}).Warning("Unable to find SSL private key file, disabling HTTPS")
+			sslCertName = ""
+		}
 
 		// extract any htpasswd entries from the environment (if configured)
 		htpasswdEntries := &[]string{}
