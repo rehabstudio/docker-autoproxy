@@ -20,7 +20,7 @@ To run it:
 # note that this doesn't actually work yet, but will once i push a release
 # to the registry, for now you can just build manually following the
 # instructions below.
-$ docker run -d -p 80:80 -p 443:443 -v /var/run/docker.sock:/var/run/docker.sock rehabstudio/docker-autoproxy
+$ docker run -d -p 80:80 -p 443:443 -v /var/run/docker.sock:/var/run/docker.sock rehabstudio/autoproxy
 ```
 
 Then start any containers you want proxied with an env var
@@ -65,7 +65,7 @@ a cert name as the environment variable `SSL_CERT_NAME`.
 To enable SSL:
 
 ```bash
-$ docker run -d -p 80:80 -p 443:443 -v /path/to/certs:/etc/nginx/ssl.d -v /var/run/docker.sock:/tmp/docker.sock rehabstudio/docker-autoproxy
+$ docker run -d -p 80:80 -p 443:443 -v /path/to/certs:/etc/nginx/ssl.d -v /var/run/docker.sock:/tmp/docker.sock rehabstudio/autoproxy
 ```
 
 The contents of `/path/to/certs` should contain the certificates and private
