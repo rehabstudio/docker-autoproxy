@@ -17,9 +17,6 @@ check it out.
 To run it:
 
 ```bash
-# note that this doesn't actually work yet, but will once i push a release
-# to the registry, for now you can just build manually following the
-# instructions below.
 $ docker run -d -p 80:80 -p 443:443 -v /var/run/docker.sock:/var/run/docker.sock rehabstudio/autoproxy
 ```
 
