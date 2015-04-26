@@ -89,6 +89,14 @@ generate a password in the appropriate format you can follow these
 [instructions](http://httpd.apache.org/docs/2.2/programs/htpasswd.html).
 
 
+### Identifying a running container
+
+Every request served by `autoproxy` has a HTTP header inserted into its
+response that can be used to identify the Docker image that was used to serve
+it. Clients can inspect the `X-Autoproxy` header on any HTTP response which
+will contain the ID of the Docker Image in use.
+
+
 ### Building autoproxy locally
 
 If you're planning to customise autoproxy, whether to submit a patch or just to

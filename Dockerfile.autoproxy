@@ -1,13 +1,21 @@
-FROM nginx:latest
+FROM debian:jessie
 MAINTAINER Patrick Carey <patrick@rehabstudio.com>
 
 # Install wget and install/updates certificates
 RUN apt-get update \
     && apt-get install -y -q --no-install-recommends \
     ca-certificates \
+    nginx-extras \
     wget \
     && apt-get clean \
     && rm -r /var/lib/apt/lists/*
+
+# forward request and error logs to docker log collector
+RUN ln -sf /dev/stdout /var/log/nginx/access.log
+RUN ln -sf /dev/stderr /var/log/nginx/error.log
+
+EXPOSE 80 443
+VOLUME ["/var/cache/nginx"]
 
 # Configure Nginx and apply fix for very long server names
 RUN echo "daemon off;" >> /etc/nginx/nginx.conf \

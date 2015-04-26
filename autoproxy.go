@@ -32,6 +32,7 @@ type containerConfig struct {
 	ContainerPort   string
 	SSLCertName     string
 	HtpasswdEntries []string
+	ImageID         string
 }
 
 // cfWriter defines a function type that is used for writing nginx
@@ -210,6 +211,7 @@ func getExistingContainers(client *docker.Client) ([]*containerConfig, error) {
 			ContainerPort:   vPort,
 			SSLCertName:     sslCertName,
 			HtpasswdEntries: *htpasswdEntries,
+			ImageID:         container.Image,
 		}
 
 		containers = append(containers, cc)

@@ -10,4 +10,4 @@ if [ ! -f docker-autoproxy ]; then
 fi
 
 # build autoproxy docker container
-docker build -t "autoproxy" -f Dockerfile.autoproxy .
+docker build -t "autoproxy:latest" -f Dockerfile.autoproxy .
